@@ -7,7 +7,7 @@ library(coda)
 library(ggplot2)
 library(dplyr)
 library(limma)
-source("DBDA2E-utilities.R")
+source("DBDA2E-utilities.R")  # this file is from Kruschke, J. K. (2015). Doing Bayesian Data Analysis, Second Edition, which provides some very useful functions
 # 1. read data ----
 pg<-fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/report.pg_matrix.tsv")
 pr<-fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/report.pr_matrix.tsv")
