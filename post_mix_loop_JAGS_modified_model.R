@@ -22,14 +22,14 @@ protein.matrix_all <- log2(as.matrix(df.prot.all))
 log2all.df <- as.data.frame(protein.matrix_all)
 rownames(log2all.df) <- df.prot2$Protein.Names
 
-# 2. input group factor, save data to a list ----
+# 2. input group factor ----
 overall_distri <- log2all.df
 group <- as.factor(metadata$Condition)
 if (length(unique(table(group))) != 1) {
-  stop("Error: The number of replicates is not the same across all groups.")
+  stop("The number of replicates is not the same across all groups.")
 }
 
-# 2.1 find mu0, gamma0 and gamma1 by plotting a histogram
+# 2.1 calculate mu0, gamma0 and gamma1 
 
 overall_info <- hist(as.matrix(overall_distri), breaks = 100, plot = FALSE)
 missing_prop <- sum(is.na(overall_distri)) / (ncol(overall_distri) * nrow(overall_distri)) 
@@ -37,7 +37,7 @@ overall_info$density <- overall_info$density * (1 - missing_prop)
 mids <- overall_info$mids
 dens <- overall_info$density
 mu_0 <- mids[which.max(dens)]
-# Empty vector to store estimated missing density per bin
+# empty vector to store estimated missing density per bin
 missing_density <- rep(0, length(overall_info$density))
 
 for (i in seq_along(mids)) {
@@ -56,12 +56,13 @@ obs_prob <- observed_count / total_count
 
 # fit logistic regression
 df <- data.frame(intensity = mids, p_obs = obs_prob)
-df <- df[is.finite(df$p_obs) & df$p_obs > 0 & df$p_obs < 1, ]  # filter valid values
+# filter valid values
+df <- df[is.finite(df$p_obs) & df$p_obs > 0 & df$p_obs < 1, ]  
 
 logit_obs <- glm(p_obs ~ intensity, data = df, family = binomial(link = "logit"))
 summary(logit_obs)
 
-# Extract coefficients
+# extract coefficients
 gamma0 <- coef(logit_obs)[1]
 gamma1 <- coef(logit_obs)[2]
 
@@ -71,7 +72,8 @@ Protein_means <- rowMeans(overall_distri, na.rm = TRUE)
 sigma_1 <- sd(Protein_means, na.rm = TRUE)
 
 # 2.3 sigma_p^2 is from a inverse-gamma distribution with shape of alpha and rate of beta
-r <- unname(table(group)[1])  # Number of replicates per group
+# Number of replicates per group
+r <- unname(table(group)[1])  
 n_groups <- nlevels(group)
 n <- n_groups # n is the number of groups
 between_group_vars_all <- apply(overall_distri, 1, function(row) {
@@ -96,7 +98,7 @@ for (i in 1:(ncol(overall_distri) %/% r)) {
   group_means_all <- c(group_means_all, group_i_mean)
   group_vars_all  <- c(group_vars_all, group_i_var)
 }
-#####calculate alpha and beta for each interval
+##### calculate alpha and beta for each interval
 a <- as.integer(min(group_means_all, na.rm = TRUE))
 b <- as.integer(max(group_means_all, na.rm = TRUE))
 alpha <- c()
@@ -141,8 +143,7 @@ f_beta <- function(mu_val) {
   }
 }
 
-
-# 2.7 specify comparison groups, filter the dataset, only keep proteins with missing values
+# 2.5 specify which two groups are compared, filter the dataset, only keep proteins with missing values
 comparison <- "G70_20_10 - G70_10_20"
 # Split the comparison string into two group names
 groups_to_compare <- strsplit(comparison, " - ")[[1]]
@@ -158,7 +159,7 @@ selected_indices <- c(group1_indices, group2_indices)
 # Subset the data
 subset_data <- overall_distri[, selected_indices]
 group_subset <- group[selected_indices]
-# only keep the rows with NA
+# only keep the rows with missing values
 subset_with_na <- subset_data[rowSums(is.na(subset_data)) > 0 & rowSums(is.na(subset_data)) < ncol(subset_data), ]
 # get row minimums from overall distribution only for the rows present in filtered subset
 rows_with_na <- rownames(subset_with_na)
@@ -167,6 +168,7 @@ row_mins <- apply(overall_distri_with_na, 1, min, na.rm = TRUE)
 
 
 # 3. model ----
+# model based on cutoffs
 modelString <- "
   model {
     # Likelihood
@@ -194,9 +196,40 @@ modelString <- "
     tau1 <- 1 / (sigma_1^2)
   }
 "
-writeLines(modelString, con = 'model.txt')
+# model based on intensity-dependent missing probabilities
+model {
+    # Likelihood
+    for (i in 1:(2 * r)) {
+      # Intensity model (normal)
+      y[i] ~ dnorm(group_mean[group_numeric[i]], group_tau[group_numeric[i]])
 
-# 4. data prep ----
+      # Missingness model: probability that y[i] is observed
+      logit(p[i]) <- gamma0 + gamma1 * y[i]
+      is_observed[i] ~ dbern(p[i])
+    }
+  
+    group_mean[1] <- mu1p
+    group_mean[2] <- mu2p
+    group_tau[1] <- tau1p
+    group_tau[2] <- tau2p
+    
+    # Group means
+    mu1p ~ dnorm(mu_p, tau_p)
+    mu2p ~ dnorm(mu_p, tau_p)
+    
+    # Group-specific data precision (depends on mu)
+    tau1p ~ dgamma(alpha1, beta1)
+    tau2p ~ dgamma(alpha2, beta2)
+    
+    # Priors for mu_p and tau_p
+    mu_p ~ dnorm(mu0, tau1)
+    tau_p ~ dgamma(alpha_p, beta_p)
+    tau1 <- 1 / (sigma_1^2)
+    
+  }
+
+
+# 4. data  ----
 # loop through entire dataset
 group_numeric <- ifelse(group_subset == groups_to_compare[1], 1,
                         ifelse(group_subset == groups_to_compare[2], 2, NA))
@@ -252,7 +285,7 @@ for (i in 1: nrow(subset_with_na)){
          tau1p = 21,
          tau2p = 21)
   )
-  if (miss_prop <= 1){
+  if (miss_prop <= 0.1){
     file_model <- 'model_logit.txt'
     # jags data
     data_jags <- list(
@@ -314,22 +347,7 @@ rownames(mcmcresults_df_rowmin) <- rownames(subset_with_na)
 #diagMCMC(codaObject = codaSample, parName = 'mu1p' )
 
 
-# 5.1 compare limma CI width with HDI width ----
-mcmcresults_df_rowmin$HDI_width <- mcmcresults_df_rowmin$HDI_High - mcmcresults_df_rowmin$HDI_Low
-results_3_4_filtered$CI_width <- results_3_4_filtered$CI.R - results_3_4_filtered$CI.L
-boxplot(
-  list(CI = na.omit(results_3_4_filtered$CI_width),
-       HDI = na.omit(mcmcresults_df_rowmin$HDI_width)),
-  col = c("skyblue", "orange"),
-  main = "CI vs HDI Width",
-  ylab = "Interval Width"
-)
-
-
-
-
-
-# 5.2 compare with limma output ----
+# 5. compare with limma output ----
 # calculate TPR and TNR, where TPR is yeast with -1.5 < median < -0.5, p <0.05  or ecoli with 0.5 < median < 1, p <0.05
 TP <- 0
 TN <- 0
@@ -346,12 +364,10 @@ for (i in 1:nrow(mcmcresults_df_rowmin)) {
   
   if (grepl("_HUMAN", row_name) && DE == 'FALSE' && pLtROPE < 95 && pGtROPE < 95) {
     TN <- TN + 1
-  } else if (#(grepl("_ECOLI", row_name) && DE == 'TRUE' && fc < -0.5 && fc > -1.5)
-             (grepl("_ECOLI", row_name)  && fc < -0.5 && fc > -1.5 && pLtROPE > 95)
+  } else if ((grepl("_ECOLI", row_name)  && fc < -0.5 && fc > -1.5 && pLtROPE > 95)
              |(grepl("_ECOLI", row_name) && fc < -0.5 && fc > -1.5 && pGtROPE > 95)) {
     TP <- TP + 1
-  } else if (#(grepl("_YEAST", row_name) && DE == 'TRUE' && fc > 0.5 && fc < 1.5)
-             (grepl("_YEAST", row_name) && fc > 0.5 && fc < 1.5 && pLtROPE > 95)
+  } else if ((grepl("_YEAST", row_name) && fc > 0.5 && fc < 1.5 && pLtROPE > 95)
              |(grepl("_YEAST", row_name) && fc > 0.5 && fc < 1.5 && pGtROPE > 95)) {
     TP <- TP + 1}
   #} else if (grepl("_HUMAN", row_name) && DE == 'TRUE') {
@@ -407,293 +423,3 @@ for (i in 1:nrow(results_3_4_filtered)) {
 cat("True Positives:", TP_limma, "\n")
 cat("True Negatives:", TN_limma, "\n")
 cat("False Positives:", FP_limma, "\n")
-
-# perseus
-impute_normal <- function(object, width=0.3, downshift=1.8, seed=100) {
-  
-  if (!is.matrix(object)) object <- as.matrix(object)
-  mx <- max(object, na.rm=TRUE)
-  mn <- min(object, na.rm=TRUE)
-  if (mx - mn > 20) warning("Please make sure the values are log-transformed")
-  
-  set.seed(seed)
-  object <- apply(object, 2, function(temp) {
-    temp[!is.finite(temp)] <- NA
-    temp_sd <- stats::sd(temp, na.rm=TRUE)
-    temp_mean <- mean(temp, na.rm=TRUE)
-    shrinked_sd <- width * temp_sd   # shrink sd width
-    downshifted_mean <- temp_mean - downshift * temp_sd   # shift mean of imputed values
-    n_missing <- sum(is.na(temp))
-    temp[is.na(temp)] <- stats::rnorm(n_missing, mean=downshifted_mean, sd=shrinked_sd)
-    temp
-  })
-  return(object)
-}
-log2all.df.perseus <- impute_normal(log2all.df, width = 0.3, downshift = 1.8, seed = 100)
-
-fit <- lmFit(log2all.df.perseus, design)
-fit <- eBayes(fit)
-
-fit2 <- contrasts.fit(fit, contrast_matrix)
-fit2 <- eBayes(fit2)
-
-results_3_4_perseus <- topTable(fit2, coef = "HYE_3_4", adjust.method = "BH", number = Inf)
-results_3_4_filtered_perseus <- results_3_4_perseus[rownames(results_3_4_perseus) %in% rownames(overall_distri_with_na), ]
-
-TP_limma <- 0
-TN_limma <- 0
-FP_limma <- 0
-for (i in 1:nrow(results_3_4_filtered_perseus)) {
-  row_name <- rownames(results_3_4_filtered_perseus)[i]
-  p_val <- results_3_4_filtered_perseus$adj.P.Val[i]
-  fc <- results_3_4_filtered_perseus$logFC[i]
-  
-  # Skip iteration if p_val or fc is NA
-  if (is.na(p_val) || is.na(fc)) next
-  
-  if (grepl("_HUMAN", row_name) && p_val > 0.05) {
-    TN_limma <- TN_limma + 1
-  } else if (grepl("_YEAST", row_name) && p_val <= 0.05 && fc < -0.5 && fc > -1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_ECOLI", row_name) && p_val <= 0.05 && fc > 0.5 && fc < 1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_HUMAN", row_name) && p_val <= 0.05) {
-    FP_limma <- FP_limma + 1
-  }
-}
-cat("True Positives:", TP_limma, "\n")
-cat("True Negatives:", TN_limma, "\n")
-cat("False Positives:", FP_limma, "\n")
-
-# LOD
-log2all.df.LOD <- log2all.df  # Make a copy
-
-# Replace NAs with row-wise minimums
-log2all.df.LOD <- t(apply(log2all.df.LOD, 1, function(row) {
-  if (all(is.na(row))) return(row)  # Leave all-NA rows as-is
-  row[is.na(row)] <- min(row, na.rm = TRUE)
-  return(row)
-}))
-
-fit <- lmFit(log2all.df.LOD, design)
-fit <- eBayes(fit)
-
-fit2 <- contrasts.fit(fit, contrast_matrix)
-fit2 <- eBayes(fit2)
-
-results_3_4_LOD <- topTable(fit2, coef = "HYE_3_4", adjust.method = "BH", number = Inf)
-results_3_4_filtered_LOD <- results_3_4_LOD[rownames(results_3_4_LOD) %in% rownames(overall_distri_with_na), ]
-
-TP_limma <- 0
-TN_limma <- 0
-FP_limma <- 0
-for (i in 1:nrow(results_3_4_filtered_LOD)) {
-  row_name <- rownames(results_3_4_filtered_LOD)[i]
-  p_val <- results_3_4_filtered_LOD$adj.P.Val[i]
-  fc <- results_3_4_filtered_LOD$logFC[i]
-  
-  # Skip iteration if p_val or fc is NA
-  if (is.na(p_val) || is.na(fc)) next
-  
-  if (grepl("_HUMAN", row_name) && p_val > 0.05) {
-    TN_limma <- TN_limma + 1
-  } else if (grepl("_YEAST", row_name) && p_val <= 0.05 && fc < -0.5 && fc > -1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_ECOLI", row_name) && p_val <= 0.05 && fc > 0.5 && fc < 1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_HUMAN", row_name) && p_val <= 0.05) {
-    FP_limma <- FP_limma + 1
-  }
-}
-cat("True Positives:", TP_limma, "\n")
-cat("True Negatives:", TN_limma, "\n")
-cat("False Positives:", FP_limma, "\n")
-
-#kNN
-# Convert to matrix
-log2all.matrix <- as.matrix(log2all.df)
-
-# Perform kNN imputation
-imputed_data <- impute.knn(log2all.matrix, k = 5)$data
-
-# Convert back to data frame
-log2all.df.kNN <- as.data.frame(imputed_data)
-
-fit <- lmFit(log2all.df.kNN, design)
-fit <- eBayes(fit)
-
-fit2 <- contrasts.fit(fit, contrast_matrix)
-fit2 <- eBayes(fit2)
-
-results_3_4_kNN <- topTable(fit2, coef = "HYE_3_4", adjust.method = "BH", number = Inf)
-results_3_4_filtered_kNN <- results_3_4_kNN[rownames(results_3_4_kNN) %in% rownames(overall_distri_with_na), ]
-
-TP_limma <- 0
-TN_limma <- 0
-FP_limma <- 0
-for (i in 1:nrow(results_3_4_filtered_kNN)) {
-  row_name <- rownames(results_3_4_filtered_kNN)[i]
-  p_val <- results_3_4_filtered_kNN$adj.P.Val[i]
-  fc <- results_3_4_filtered_kNN$logFC[i]
-  
-  # Skip iteration if p_val or fc is NA
-  if (is.na(p_val) || is.na(fc)) next
-  
-  if (grepl("_HUMAN", row_name) && p_val > 0.05) {
-    TN_limma <- TN_limma + 1
-  } else if (grepl("_YEAST", row_name) && p_val <= 0.05 && fc < -0.5 && fc > -1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_ECOLI", row_name) && p_val <= 0.05 && fc > 0.5 && fc < 1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_HUMAN", row_name) && p_val <= 0.05) {
-    FP_limma <- FP_limma + 1
-  }
-}
-cat("True Positives:", TP_limma, "\n")
-cat("True Negatives:", TN_limma, "\n")
-cat("False Positives:", FP_limma, "\n")
-
-# 6. volcano plot limma vs mcmc ----
-# Add a new column for category based on rownames
-mcmcresults_df_rowmin$Group <- ifelse(grepl("_HUMAN", rownames(mcmcresults_df_rowmin)), "HUMAN",
-                                      ifelse(grepl("_ECOLI", rownames(mcmcresults_df_rowmin)), "ECOLI",
-                                             ifelse(grepl("_YEAST", rownames(mcmcresults_df_rowmin)), "YEAST", "OTHER")))
-
-# Plot
-ggplot(mcmcresults_df_rowmin, aes(x = Median, y = -log10(pGtCompVal), color = Group)) +
-  geom_point(size = 2) +
-  scale_color_manual(values = c("HUMAN" = "skyblue", "ECOLI" = "red", "YEAST" = "yellow")) +
-  labs(title = "mcmc Results",
-       x = "Posterior Median",
-       y = "pValue") +
-  ylim(0,5) +
-  theme_minimal()
-
-
-# 7. performance on entirely missing groups ----
-first_five_na <- apply(overall_distri_filtered[, 1:5], 1, function(row) all(is.na(row)))
-last_five_na <- apply(overall_distri_filtered[, 6:10], 1, function(row) all(is.na(row)))
-na_rows <- which(first_five_na | last_five_na)
-mcmcresults_df_rowmin_allmissing <- mcmcresults_df_rowmin[na_rows, ]
-results_3_4_filtered <- results_3_4_perseus[rownames(results_3_4_perseus) %in% rownames(mcmcresults_df_rowmin_allmissing), ]
-
-
-# 8. ampute a complete dataset (use ritika's data, original FC as true FC) ----
-log2all.df_complete <- log2all.df[complete.cases(log2all.df), ]
-hist(as.matrix(final_df), col = 'skyblue', breaks = 100)
-
-# Flatten to long format with row index
-library(tidyr)
-library(dplyr)
-
-# Add row numbers for tracking
-log2all.df_complete$row_id <- seq_len(nrow(log2all.df_complete))
-
-# Convert to long format
-long_df <- log2all.df_complete %>%
-  pivot_longer(-row_id, names_to = "sample", values_to = "value") %>%
-  filter(!is.na(value))
-
-# Split values into <16 and >16
-left_values <- long_df %>% filter(value < 16)
-right_values <- long_df %>% filter(value > 16)
-
-# Build histograms (mirrored around 16)
-breaks <- seq(floor(min(long_df$value)), ceiling(max(long_df$value)), by = 0.5)
-hist_left <- hist(left_values$value, breaks = breaks, plot = FALSE)
-hist_right <- hist(right_values$value, breaks = breaks, plot = FALSE)
-
-# Mirror the left histogram to define max allowed for the right
-target_counts_right <- rev(hist_left$counts[hist_left$mids < 16])
-
-# Compare and get indices of "extra" values on the right
-excess_indices <- c()
-for (i in seq_along(target_counts_right)) {
-  bin_mid <- hist_right$mids[hist_right$mids > 16][i]
-  current_bin_vals <- right_values %>%
-    filter(value >= (bin_mid - 0.25), value < (bin_mid + 0.25))
-  
-  excess_n <- nrow(current_bin_vals) - target_counts_right[i]
-  if (excess_n > 0) {
-    # Mark rows to remove (as many as needed)
-    excess_rows <- head(current_bin_vals$row_id, excess_n)
-    excess_indices <- c(excess_indices, excess_rows)
-  }
-}
-
-# Remove entire rows containing excess right-side values
-final_df <- log2all.df_complete[!log2all.df_complete$row_id %in% excess_indices, ]
-
-# Remove helper column
-final_df$row_id <- NULL
-
-# define a logistic curve
-
-L <- 1      # Max value
-k <- 3      # Steepness
-x0 <- 13.5     # Midpoint
-
-# Plot the logistic curve
-curve(L / (1 + exp(-k * (x - x0))),
-      from = 10, to = 17,
-      col = "blue", lwd = 2,
-      ylab = "f(x)", xlab = "x",
-      main = "Logistic Curve")
-
-# ampute the final_df with the probability of the logistic regression
-# Set seed for reproducibility
-set.seed(123)
-
-# Logistic function
-logistic <- function(x, L = 1, k = 1.5, x0 = 14) {
-  L / (1 + exp(-k * (x - x0)))
-}
-
-# Copy final_df to ampute
-amputed_df <- final_df
-
-# Apply missingness row-wise
-amputed_df[] <- lapply(final_df, function(col) {
-  sapply(col, function(x) {
-    if (is.na(x)) return(NA)
-    prob_missing <- 1 - logistic(x)
-    if (runif(1) < prob_missing) NA else x
-  })
-})
-
-hist(unlist(amputed_df), breaks = 50, main = "After Amputation", col = "skyblue", xlab = "x")
-
-
-
-
-
-# 9. RMSE calculation ----
-mcmcresults_df_rowmin$trueVal <- ifelse(grepl("HUMAN", rownames(mcmcresults_df_rowmin)), 0,
-                                        ifelse(grepl("ECOLI", rownames(mcmcresults_df_rowmin)), 1,
-                                               ifelse(grepl("YEAST", rownames(mcmcresults_df_rowmin)), -1, NA)))
-rmse_mcmc <- sqrt(mean((mcmcresults_df_rowmin$trueVal - mcmcresults_df_rowmin$Median)^2, na.rm = TRUE))
-#NRMSE_mcmc <- rmse_mcmc / sd(original_data, na.rm = TRUE)
-results_3_4_filtered$trueVal <- ifelse(grepl("HUMAN", rownames(results_3_4_filtered)), 0,
-                                        ifelse(grepl("ECOLI", rownames(results_3_4_filtered)), 1,
-                                               ifelse(grepl("YEAST", rownames(results_3_4_filtered)), -1, NA)))
-rmse_limma <- sqrt(mean((results_3_4_filtered$trueVal - results_3_4_filtered$logFC)^2, na.rm = TRUE))
-results_3_4_filtered_kNN$trueVal <- ifelse(grepl("HUMAN", rownames(results_3_4_filtered_kNN)), 0,
-                                       ifelse(grepl("ECOLI", rownames(results_3_4_filtered_kNN)), 1,
-                                              ifelse(grepl("YEAST", rownames(results_3_4_filtered_kNN)), -1, NA)))
-rmse_kNN <- sqrt(mean((results_3_4_filtered_kNN$trueVal - results_3_4_filtered_kNN$logFC)^2, na.rm = TRUE))
-
-
-# 10. venn diagram ----
-grid.newpage()
-venn.plot <- draw.pairwise.venn(
-  area1 = 308 + 10567,       # total proteins in condition 1
-  area2 = 609 + 10567,       # total proteins in condition 2
-  cross.area = 10567,        # shared proteins
-  category = c("Condition 2", "Condition 1"),
-  fill = c("lightblue", "lightgreen"),
-  lty = "blank",             # no border lines
-  cex = 2,                   # text size for counts
-  cat.cex = 1.5,             # text size for category labels
-  cat.pos = c(0, 0),     # label positions
-  scaled = FALSE)
-
