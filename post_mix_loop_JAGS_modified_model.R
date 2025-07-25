@@ -123,7 +123,7 @@ for (x in a:b) {
     beta <- c(beta, NA)
   }
 }
-# define the function f_alpha and f_beta that is mu is in a certain interval, return alpha and beta
+# define the function f_alpha and f_beta that in a certain interval, return alpha and beta for each mu in a certain interval 
 bin_breaks <- a:(b + 1)  # From a to b+1 so that each bin is [x, x+1]
 f_alpha <- function(mu_val) {
   idx <- findInterval(mu_val, bin_breaks, rightmost.closed = TRUE)
@@ -233,7 +233,7 @@ model {
 # loop through entire dataset
 group_numeric <- ifelse(group_subset == groups_to_compare[1], 1,
                         ifelse(group_subset == groups_to_compare[2], 2, NA))
-mcmcresults_list_rowmin <- list() 
+mcmcresults_list <- list() 
 for (i in 1: nrow(subset_with_na)){
   y <- unlist(subset_with_na[i, ])
   
@@ -249,7 +249,7 @@ for (i in 1: nrow(subset_with_na)){
     DE = NA
   )
   if (all(is.na(y))) {
-    mcmcresults_list_rowmin[[i]] <- summary_row
+    mcmcresults_list[[i]] <- summary_row
     next
   }
   
@@ -299,7 +299,7 @@ for (i in 1: nrow(subset_with_na)){
     )
     
     if (anyNA(data_jags)) {
-      mcmcresults_list_rowmin[[i]] <- summary_row
+      mcmcresults_list[[i]] <- summary_row
       next
     }
   } else {
@@ -316,7 +316,7 @@ for (i in 1: nrow(subset_with_na)){
     )
     
     if (anyNA(data_jags)) {
-      mcmcresults_list_rowmin[[i]] <- summary_row
+      mcmcresults_list[[i]] <- summary_row
       next
     }
   }
@@ -340,86 +340,8 @@ for (i in 1: nrow(subset_with_na)){
     pGtROPE = postSummary["PcntGtROPE"],
     DE = (postSummary["HDIlow"] > 0.2) | (postSummary["HDIhigh"] < -0.2)
   )
-  mcmcresults_list_rowmin[[i]] <- summary_row
+  mcmcresults_list[[i]] <- summary_row
 }
-mcmcresults_df_rowmin <- do.call(rbind, mcmcresults_list_rowmin)
-rownames(mcmcresults_df_rowmin) <- rownames(subset_with_na)
+mcmcresults_df <- do.call(rbind, mcmcresults_list)
+rownames(mcmcresults_df) <- rownames(subset_with_na)
 #diagMCMC(codaObject = codaSample, parName = 'mu1p' )
-
-
-# 5. compare with limma output ----
-# calculate TPR and TNR, where TPR is yeast with -1.5 < median < -0.5, p <0.05  or ecoli with 0.5 < median < 1, p <0.05
-TP <- 0
-TN <- 0
-FP <- 0
-for (i in 1:nrow(mcmcresults_df_rowmin)) {
-  row_name <- rownames(mcmcresults_df_rowmin)[i]
-  p_val <- mcmcresults_df_rowmin$pLtCompVal[i]
-  fc <- mcmcresults_df_rowmin$Median[i]
-  DE <- mcmcresults_df_rowmin$DE[i]
-  pLtROPE <- mcmcresults_df_rowmin$pLtROPE[i]
-  pGtROPE <- mcmcresults_df_rowmin$pGtROPE[i]
-  # Skip iteration if p_val or fc is NA
-  if (is.na(p_val) || is.na(fc)) next
-  
-  if (grepl("_HUMAN", row_name) && DE == 'FALSE' && pLtROPE < 95 && pGtROPE < 95) {
-    TN <- TN + 1
-  } else if ((grepl("_ECOLI", row_name)  && fc < -0.5 && fc > -1.5 && pLtROPE > 95)
-             |(grepl("_ECOLI", row_name) && fc < -0.5 && fc > -1.5 && pGtROPE > 95)) {
-    TP <- TP + 1
-  } else if ((grepl("_YEAST", row_name) && fc > 0.5 && fc < 1.5 && pLtROPE > 95)
-             |(grepl("_YEAST", row_name) && fc > 0.5 && fc < 1.5 && pGtROPE > 95)) {
-    TP <- TP + 1}
-  #} else if (grepl("_HUMAN", row_name) && DE == 'TRUE') {
-    FP <- FP + 1
-  #}
-}
-FP <- sum(grepl("_HUMAN", rownames(mcmcresults_df_rowmin))) - TN
-cat("True Positives:", TP, "\n")
-cat("True Negatives:", TN, "\n")
-cat("False Positives:", FP, "\n")
-
-# limma result
-
-metadata <- fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/metadata.txt", header = TRUE)
-
-design <- model.matrix(~ 0 + Condition, data = metadata)
-colnames(design) <- gsub("Condition", "", colnames(design))
-
-fit <- lmFit(log2all.df, design)
-fit <- eBayes(fit)
-contrast_matrix <- makeContrasts(
-  HYE_1_2 = G35_25_40 - G35_40_25,
-  HYE_3_4 = G70_10_20 - G70_20_10,
-  levels = design
-)
-
-fit2 <- contrasts.fit(fit, contrast_matrix)
-fit2 <- eBayes(fit2)
-results_3_4 <- topTable(fit2, coef = "HYE_3_4", adjust.method = "BH", number = Inf, confint = TRUE)
-results_3_4_filtered <- results_3_4[rownames(results_3_4) %in% rownames(overall_distri_with_na), ]
-
-TP_limma <- 0
-TN_limma <- 0
-FP_limma <- 0
-for (i in 1:nrow(results_3_4_filtered)) {
-  row_name <- rownames(results_3_4_filtered)[i]
-  p_val <- results_3_4_filtered$adj.P.Val[i]
-  fc <- results_3_4_filtered$logFC[i]
-  
-  # Skip iteration if p_val or fc is NA
-  if (is.na(p_val) || is.na(fc)) next
-  
-  if (grepl("_HUMAN", row_name) && p_val > 0.05) {
-    TN_limma <- TN_limma + 1
-  } else if (grepl("_YEAST", row_name) && p_val <= 0.05 && fc < -0.5 && fc > -1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_ECOLI", row_name) && p_val <= 0.05 && fc > 0.5 && fc < 1.5) {
-    TP_limma <- TP_limma + 1
-  } else if (grepl("_HUMAN", row_name) && p_val <= 0.05) {
-    FP_limma <- FP_limma + 1
-  }
-}
-cat("True Positives:", TP_limma, "\n")
-cat("True Negatives:", TN_limma, "\n")
-cat("False Positives:", FP_limma, "\n")
