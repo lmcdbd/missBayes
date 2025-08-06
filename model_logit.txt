@@ -1,0 +1,31 @@
+# model based on intensity-dependent missing probabilities
+model {
+  # Likelihood
+  for (i in 1:(2 * r)) {
+    # Intensity model (normal)
+    y[i] ~ dnorm(group_mean[group_numeric[i]], group_tau[group_numeric[i]])
+      
+    # Missingness model: probability that y[i] is observed
+    logit(p[i]) <- gamma0 + gamma1 * y[i]
+    is_observed[i] ~ dbern(p[i])
+  }
+    
+  group_mean[1] <- mu1p
+  group_mean[2] <- mu2p
+  group_tau[1] <- tau1p
+  group_tau[2] <- tau2p
+    
+  # Group means
+  mu1p ~ dnorm(mu_p, tau_p)
+  mu2p ~ dnorm(mu_p, tau_p)
+    
+  # Group-specific data precision (depends on mu)
+  tau1p ~ dgamma(alpha1, beta1)
+  tau2p ~ dgamma(alpha2, beta2)
+    
+  # Priors for mu_p and tau_p
+  mu_p ~ dnorm(mu0, tau1)
+  tau_p ~ dgamma(alpha_p, beta_p)
+  tau1 <- 1 / (sigma_1^2)
+    
+}
