@@ -453,7 +453,7 @@ runModel <- function(overall_distri, contrast_data, sigma_p2p, sigma_jp2p, zS, s
     }
     # Combine results
     mcmcresults_df <- do.call(rbind, mcmcresults_list_all)
-    rownames(mcmcresults_df) <- rownames(subset_data)
+    rownames(mcmcresults_df) <- rownames(fixed_data$subset_data)
   } else{
     
     mcmcresults_list_all <- lapply(
