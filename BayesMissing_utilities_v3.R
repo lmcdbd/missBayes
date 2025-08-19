@@ -9,7 +9,7 @@ library(dplyr)
 library(limma)
 library(QFeatures)
 library(parallel)
-source("P:/Trost-group/Mengchun/8) MIP/Rscript/DBDA2E-utilities.R")  # this file is from Kruschke, J. K. (2015). Doing Bayesian Data Analysis, Second Edition, which provides some very useful functions
+source("DBDA2E-utilities.R")  # this file is from Kruschke, J. K. (2015). Doing Bayesian Data Analysis, Second Edition, which provides some very useful functions
 
 
 # 2.1 calculate mu0, gamma0 and gamma1 -------
@@ -194,10 +194,11 @@ generate_overdispersed_inits <- function(sample_mean_1, sample_mean_2, sample_va
       mu1p = sample_mean_1 + sign1 * rnorm(1, sd = sqrt(sample_var_1) * spread_factor),
       mu2p = sample_mean_2 + sign2 * rnorm(1, sd = sqrt(sample_var_2) * spread_factor),
       tau1p = 1 / (sample_var_1 * runif(1, 0.5, 1.5)),  # wider range
-      tau2p = 1 / (sample_var_2 * runif(1, 0.5, 1.5))
+      tau2p = 1 / (sample_var_2 * runif(1, 0.5, 1.5)),
+      .RNG.name = "base::Super-Duper", .RNG.seed = i
     )
   }
-  
+
   return(inits_list)
 }
 
@@ -380,7 +381,7 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
   e1 <- environment()
   fixed_data <- list(
     subset_data = contrast_data$subset_data,
-    group_subset = contrast_data$group_subset,
+    group_subset = factor(contrast_data$group_subset), #Drop unused levels
     groups_to_compare = contrast_data$groups_to_compare,
     row_mins = contrast_data$cp,
     group_numeric = ifelse(contrast_data$group_subset == contrast_data$groups_to_compare[1], 1,
@@ -413,9 +414,8 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
     default_var = default_data['default_var']
   )
   
-  
-  model_txt <- readLines('model.txt')
-  model_logit_txt <- readLines('model_logit.txt')
+  model_txt <- readLines('model.txt', warn = FALSE)
+  model_logit_txt <- readLines('model_logit.txt', warn = FALSE)
   
   if (parallel){
     n_cores <- detectCores() - 1
@@ -434,7 +434,7 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
       cl <- makeCluster(n_cores)
 
       # Export ALL required objects and functions
-      clusterExport(cl, varlist = ls(envir = globalenv()), envir = globalenv())
+      clusterExport(cl, varlist = ls(globalenv()), envir = globalenv())
       
       clusterEvalQ(cl, {
         library(rjags)
@@ -493,7 +493,7 @@ BayesMissingModel <-  function(values, groups, comparisons, filter4NAs = FALSE, 
   s2P <- sigma_p2params(values, groups)
   sjp2P <- sigma_jp2params(values, s2P$r)
   d <- default_val(values, sjp2P$group_vars_all)
-  
+
   bayesResults <- list()
   for (contrast in colnames(comparisons)){
     cd <- setupContrasts(values,
@@ -509,44 +509,56 @@ BayesMissingModel <-  function(values, groups, comparisons, filter4NAs = FALSE, 
   return(bayesResults)
 }
 
-# 5. TEST ------
-# import data
-pg<-fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/report.pg_matrix.tsv")
-pr<-fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/report.pr_matrix.tsv")
-t <- table(unique(pr[,c('Protein.Group','Stripped.Sequence')])$Protein.Group)
-pg$Peptide.Count <- t[match(pg$Protein.Group,names(t))]
-metadata <- fread("P:/Trost-group/Mengchun/8) MIP/CQE/HYE_3spp/metadata.txt", header = TRUE)
-#Filter by protein groups with <2 peptides
-df.prot <- filter(pg, Peptide.Count > 1)
-df.prot2 <- df.prot[!grepl("Cont_",df.prot$Protein.Group),]
-df.prot.all<- df.prot2[, 5:29]
-protein.matrix_all <- log2(as.matrix(df.prot.all))
-log2all.df <- as.data.frame(protein.matrix_all)
-rownames(log2all.df) <- df.prot2$Protein.Names
-
-overall_distri <- log2all.df
-group <- as.factor(metadata$Condition)
-x <- c('G70_10_20 - G70_20_10', 'G35_25_40 - G35_40_25')
-comparison <- limma::makeContrasts(contrasts = x, levels = levels(group))
-start.time <- Sys.time()
-output <- BayesMissingModel(overall_distri, group, comparison, filter4NAs = TRUE, parallel = TRUE)
-finish.time <- Sys.time()
-
 # QFeatures ------
-# QFeatures integration, runs model fitting for all specified comparisons and 
-# adds them to existing QFeatures object.
-# WRITE DOCUMENTATION!!
+# QFeatures integration, runs model fitting for all specified comparisons and adds them to existing QFeatures object.
+# 'obj' is a QFeatures instance.
+# 'i' is a string or integer specifying the element of 'obj' that contains the log abundance intensities that will be modeled.
+# 'fcol' is a string  that denotes feature variable of assay ‘i’ defining how to summarise the features.
+# 'comparisons' is a matrix showing which groups to compare for each contrast, output by limma::makeContrasts.
+# 'gcol' is a string or integer specifying which column of colData(obj) denotes sample -> group assignments
+# 'filter4NAs' is a bool denoting whether to only use proteins that possess missing values.
+# 'contrastPrefix' is a string that prefixes model results names.
+# 'filter4NAs' is a bool denoting whether to only use proteins that possess missing values.
+# 'threshold' is a numeric representing the missing proportion of the groups being compared under which the logistic model will be
+# -applied, otherwise the truncated normal model will be applied.
+# 'parallel' is a bool denoting whether to do parallel computing.
+# 'ROPE' is a vector of two elements, specifying the region of practical equivalence with in which the log fold change is considered
+# -equivalent to zero.
+# 'n.adapt', 'burn.in', 'n.iter' and 'n.chains' are integers denoting number of adaptation steps, burn-in steps, iteration taken by each
+#  -chain and number of chains.
+# 'mcmcDiag' is a bool denoting whether to show MCMC diagnostics in the output.
+# OUTPUT:
+# Original QFeatures object 'obj' with model results attached.
 setGeneric("BayesianMissingAggregate", function(obj,...) standardGeneric("BayesianMissingAggregate"))
 
 setMethod(
   "BayesianMissingAggregate", "QFeatures",
-  function(obj, i, fcol, comparisons, name = 'BayesModels', filter4NAs = FALSE, contrastPrefix = ""){
+  function(obj, i, fcol, comparisons, gcol, contrastPrefix = 'BayesMissingOutput - ', threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2), 
+           n.adapt = 500,burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
+    
     if (is.null(obj[[i]])) stop("QFeatures object does not contain assay ", i)
     
-    log2all.df <- assay(obj[[i]])
+    if (!fcol %in% colnames(rowData(obj[[i]])))
+      stop("The rowData does not contain variable '", fcol, "'.")
+    
+    if (!gcol %in% colnames(colData(obj)))
+      stop("The colData does not contain variable '", gcol, "'.")
+    
+    log2all.df <- as.data.frame(assay(obj[[i]]))
     rownames(log2all.df) <- rowData(obj[[i]])[,fcol]
     
-    results <- BayesMissingModel(log2all.df, colData(obj)$condition, comparisons, filter4NAs)
+    results <- BayesMissingModel(values = log2all.df, 
+                                 groups = colData(obj)[,gcol], 
+                                 comparisons = comparisons, 
+                                 filter4NAs = FALSE, #Filter4NAs must be false so that results align with rowData.
+                                 threshold = threshold,
+                                 parallel = parallel, 
+                                 ROPE = ROPE,
+                                 n.adapt = n.adapt, 
+                                 burn.in = burn.in, 
+                                 n.iter = n.iter, 
+                                 n.chains = n.chains,
+                                 mcmcDiag = mcmcDiag)
     
     for (contrast in colnames(comparisons)){
       rowData(obj[[i]])[[paste0(contrastPrefix, contrast)]] <- results[[contrast]]
@@ -555,6 +567,45 @@ setMethod(
     return(obj)
   }
 )
+
+
+# 5. TEST ------
+# import data
+pg<-fread("test_data/report.pg_matrix.tsv")
+pr<-fread("test_data/report.pr_matrix.tsv")
+t <- table(unique(pr[,c('Protein.Group','Stripped.Sequence')])$Protein.Group)
+pg$Peptide.Count <- t[match(pg$Protein.Group,names(t))]
+metadata <- fread("test_data/metadata.txt", header = TRUE)
+#Filter by protein groups with <2 peptides
+df.prot <- filter(pg, Peptide.Count > 1)
+df.prot2 <- df.prot[!grepl("Cont_",df.prot$Protein.Group),]
+df.prot.all<- df.prot2[, 5:29]
+protein.matrix_all <- log2(as.matrix(df.prot.all))
+log2all.df <- as.data.frame(protein.matrix_all)
+rownames(log2all.df) <- df.prot2$Protein.Names
+
+
+overall_distri <- log2all.df
+group <- as.factor(metadata$Condition)
+x <- c('G70_10_20 - G70_20_10', 'G35_25_40 - G35_40_25')
+comparison <- limma::makeContrasts(contrasts = x, levels = levels(group))
+start.time <- Sys.time()
+output <- BayesMissingModel(overall_distri, group, comparison, filter4NAs = TRUE, parallel = TRUE, n.chains = 4, mcmcDiag = TRUE)
+finish.time <- Sys.time()
+print(finish.time - start.time)
+
+# QFeatures demo
+qf <- readQFeatures(pg, quantCols = metadata$name, name = 'MaxLFQ')
+colData(qf)$condition <- as.factor(metadata$Condition)
+rowData(qf[['MaxLFQ']])$contaminant = grepl("Cont_",rowData(qf[['MaxLFQ']])$Protein.Group)
+qf <- filterFeatures(qf, ~ Peptide.Count > 1)
+qf <- filterFeatures(qf, ~ contaminant == FALSE)
+qf <- logTransform(qf, base = 2, i = "MaxLFQ", name = "MaxLFQLog2")
+qf <- BayesianMissingAggregate(qf, i = 'MaxLFQLog2', 
+                               fcol = 'Protein.Names',
+                               comparisons = comparison, 
+                               gcol = 'condition', 
+                               parallel = TRUE, n.chains = 4, mcmcDiag = TRUE)
 
 # result
 TP_mcmc <- 0
