@@ -1,0 +1,330 @@
+#' Calculate data-level hyperparameters
+#' Estimates the global mode of the data (`mu_0`) and the coefficients (`gamma0`, `gamma1`)
+#' for a logistic regression that models the probability of a value being observed
+#' as a function of its intensity.
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @return A named numeric vector of hyperparameters:
+#'   \item{mu_0}{The estimated global mode of the data distribution.}
+#'   \item{gamma0}{The intercept of logistic model.}
+#'   \item{gamma1}{The slope of logistic model.}
+#'
+#' @export
+
+zeroState <- function(overall_distri){
+
+  overall_info <- graphics::hist(as.matrix(overall_distri), breaks = 100, plot = FALSE)
+  missing_prop <- sum(is.na(overall_distri)) / (ncol(overall_distri) * nrow(overall_distri))
+  overall_info$density <- overall_info$density * (1 - missing_prop)
+  mids <- overall_info$mids
+  dens <- overall_info$density
+  mu_0 <- mids[which.max(dens)]
+  # empty vector to store estimated missing density per bin
+  missing_counts <- rep(0, length(overall_info$counts))
+  for (i in seq_along(mids)) {
+    if (mids[i] < mu_0) {
+      mirror_i <- which.min(abs(mids - (2 * mu_0 - mids[i])))
+      expected <- overall_info$counts[mirror_i]
+      observed <- overall_info$counts[i]
+      missing_counts[i] <- max(0, expected - observed)
+    }
+  }
+
+  # estimate observed probability per bin
+  observed_count <- overall_info$counts
+  total_count <- observed_count + missing_counts
+  obs_prob <- observed_count / total_count
+
+  # fit logistic regression
+  df <- data.frame(
+    intensity = mids,
+    observed = observed_count,
+    missing = missing_counts,
+    total = total_count,
+    p_obs = obs_prob
+  )
+  df <- df[is.finite(df$p_obs) & df$p_obs > 0 & df$p_obs < 1 & df$total > 0, ]
+  logit_obs <- stats::glm(cbind(observed, missing) ~ intensity, data = df, family = stats::binomial(link = "logit"))
+
+  # extract coefficients
+  gamma0 <- stats::coef(logit_obs)[1]
+  gamma1 <- stats::coef(logit_obs)[2]
+  zS <- c(mu_0, gamma0, gamma1)
+  names(zS) <- c('mu_0', 'gamma0', 'gamma1')
+
+  return (zS)
+}
+
+
+#' Calculate the protein-level standard deviation
+#'
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @return A single numeric value representing the estimated standard deviation
+#'   across protein means.
+#' @export
+
+
+sigma1 <- function(overall_distri){
+  Protein_means <- rowMeans(overall_distri, na.rm = TRUE)
+  sigma_1 <- stats::sd(Protein_means, na.rm = TRUE)
+
+  return (sigma_1)
+}
+
+
+
+
+#' Estimate hyperparameters for the between-group variance prior
+#'
+#' This function models the between-group variance.
+#'
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @param group A factor vector specifying the group assignment for each sample.
+#' @return A list containing:
+#'   \item{alpha_p}{Shape of the inverse-gamma prior.}
+#'   \item{beta_p}{Rate of the inverse-gamma prior.}
+#'   \item{r}{Number of replicates per group.}
+#'   \item{group_means}{Matrix of mean value for each protein in each group.}
+#' @export
+
+
+sigma_p2params <- function(overall_distri, group){
+
+  r <- unname(table(group)[1])  # Number of replicates per group
+  n <- nlevels(group) # Number of groups
+
+  group_means <- t(apply(overall_distri, 1, function(row) {
+    sapply(1:n, function(i) {
+      group_indices <- (r * (i - 1) + 1):(r * i)
+      mean(row[group_indices], na.rm = TRUE)
+    })
+  }))
+  between_group_vars_all <- apply(group_means, 1, var, na.rm = TRUE)
+
+  mean_var <- mean(between_group_vars_all, na.rm = TRUE)
+  var_var <- stats::var(between_group_vars_all, na.rm = TRUE)
+  alpha_p <- mean_var^2 / n*var_var + 2
+  beta_p <- mean_var * (alpha_p - 1)
+
+  sigma_p2params <- list(alpha_p, beta_p, as.numeric(r), group_means) ########
+  names(sigma_p2params) <- c('alpha_p', 'beta_p', 'r', 'group_means')
+
+  return (sigma_p2params)
+}
+
+#' Estimate hyperparameters for the within-group variance prior
+#'
+#' Models the within-group variance as a function of the group mean.
+#'
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @param r n integer specifying the number of replicates per group.
+#' @return A list containing:
+#'   \item{alpha}{A vector of shape parameters for each intensity bin.}
+#'   \item{beta}{A vector of rate parameters for each intensity bin.}
+#'   \item{a}{The lower bound of the intensity bins.}
+#'   \item{b}{The upper bound of the intensity bins.}
+#'   \item{group_vars_all}{A vector of all within-group variances.}
+#' @export
+
+sigma_jp2params <- function(overall_distri, r){
+  group_means_all <- c()
+  group_vars_all <- c()
+  for (i in 1:(ncol(overall_distri) %/% r)) {
+    group_i <- overall_distri[, (r * (i - 1) + 1):(r * i)]
+    group_i_mean <- rowMeans(group_i, na.rm = TRUE)
+    group_i_var   <- matrixStats::rowVars(as.matrix(group_i), na.rm = TRUE)
+    group_means_all <- c(group_means_all, group_i_mean)
+    group_vars_all  <- c(group_vars_all, group_i_var)
+  }
+  ##### calculate alpha and beta for each interval
+  a <- as.integer(min(group_means_all, na.rm = TRUE))
+  b <- as.integer(max(group_means_all, na.rm = TRUE))
+  alpha <- c()
+  beta <- c()
+  bin_centers <- c()
+  for (x in a:b) {
+    selected_vars <- group_vars_all[group_means_all >= x & group_means_all <= x + 1]
+    selected_vars <- selected_vars[!is.na(selected_vars)]
+    bin_centers_x <- mean(c(x,x+1))
+    bin_centers <- c(bin_centers, bin_centers_x)
+    if(length(selected_vars) > 1) {
+      mean_vars <- mean(selected_vars)
+      var_vars <- stats::var(selected_vars)
+
+      alpha_x <- (2 + (mean_vars^2 / r * var_vars))
+      beta_x <- mean_vars * (alpha_x - 1)
+
+      alpha <- c(alpha, alpha_x)
+      beta <- c(beta, beta_x)
+    } else {
+      alpha <- c(alpha, NA)
+      beta <- c(beta, NA)
+    }
+  }
+  params <- c(list(alpha), list(beta), a, b, list(group_vars_all))
+  names(params) <- c('alpha', 'beta', 'a', 'b', 'group_vars_all')
+  return (params)
+}
+
+
+#' Helper function to retrieve alpha based on sample mean
+#' A helper function that maps group mean value to its
+#' corresponding shape parameter for the inverse-gamma prior on
+#' within-group variance.
+#' @param mu_val A numeric group mean value.
+#' @param alpha A vector of alpha parameters returned by `sigma_jp2params`.
+#' @param a The lower bound of the intensity bins returned by `sigma_jp2params`.
+#' @param b The upper bound of the intensity bins returned by `sigma_jp2params`.
+#' @return The alpha parameter for the inverse-gamma prior corresponding to the
+#'   intensity bin that `mu_val` falls into.
+
+
+# define the function f_alpha and f_beta that in a certain interval, return alpha and beta for each mu in a certain interval-------
+f_alpha <- function(mu_val, alpha, a, b) {
+  bin_breaks <- a:(b + 1)  # From a to b+1 so that each bin is [x, x+1]
+  idx <- findInterval(mu_val, bin_breaks, rightmost.closed = TRUE)
+  if (!is.na(alpha[idx])) {
+    return(alpha[idx])
+  } else {
+    stop(paste("No alpha value available for mu =", mu_val))
+  }
+}
+
+#' Helper function to retrieve beta based on sample mean
+#' A helper function that maps group mean value to its
+#' corresponding rate parameter for the inverse-gamma prior on
+#' within-group variance.
+#' @param mu_val A numeric group mean value.
+#' @param beta A vector of beta parameters returned by `sigma_jp2params`.
+#' @param a The lower bound of the intensity bins returned by `sigma_jp2params`.
+#' @param b The upper bound of the intensity bins returned by `sigma_jp2params`.
+#' @return The beta parameter for the inverse-gamma prior corresponding to the
+#'   intensity bin that `mu_val` falls into.
+
+
+f_beta <- function(mu_val, beta, a, b) {
+  bin_breaks <- a:(b + 1)  # From a to b+1 so that each bin is [x, x+1]
+  idx <- findInterval(mu_val, bin_breaks, rightmost.closed = TRUE)
+  if (!is.na(beta[idx])) {
+    return(beta[idx])
+  } else {
+    stop(paste("No beta value available for mu =", mu_val))
+  }
+}
+
+#' Subset data and make specific contrast
+#' Prepares a dataset for differential analysis between two specified groups.
+#' Subsets the global data matrix to the corresponding samples and optionally
+#' filter to include only proteins that contain missing values
+#' .
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @param comparisons A matrix showing which groups to compare for each contrast, output by limma::makeContrasts.
+#' @param contrast A string specifying which two groups are compared.
+#' @param group A factor vector specifying the group assignment for each sample.
+#' @param filter4NAs Logical. If `TRUE`, filters the dataset to retain only rows (proteins)
+#'   that contain at least one missing value.
+#' @return A list containing the data for the contrast:
+#'   \item{subset_data}{The subset to the two groups being compared.}
+#'   \item{group_subset}{The group factor subset to the two groups.}
+#'   \item{groups_to_compare}{The names of the two groups being compared.}
+#'   \item{cp}{A vector of minimum values per protein from the full dataset,
+#'   used as a cutoff.}
+#' @export
+
+
+# specify all comparisons, filter the dataset, only keep proteins with missing values -------
+setupContrasts <- function(overall_distri, comparisons, contrast, group, filter4NAs){
+  # Split the comparison string into two group names
+  groups_to_compare <- names(comparisons[,contrast])[comparisons[,contrast] != 0]
+
+  # Get indices for each group
+  group1_indices <- which(group == groups_to_compare[1])
+  group2_indices <- which(group == groups_to_compare[2])
+  # Combine indices if needed
+  selected_indices <- c(group1_indices, group2_indices)
+  # Subset the data
+  subset_data <- overall_distri[, selected_indices]
+  group_subset <- group[selected_indices]
+  # only keep the rows with missing values
+  if (filter4NAs){
+    subset_data <- subset_data[rowSums(is.na(subset_data)) > 0 & rowSums(is.na(subset_data)) < ncol(subset_data), ]
+    rows_with_na <- rownames(subset_data)
+    overall_distri <- overall_distri[rows_with_na, , drop = FALSE]
+  }
+  # get row minimums from overall distribution only for the rows present in filtered subset
+  row_mins <- apply(overall_distri, 1, min, na.rm = TRUE)
+
+  output <- list(subset_data, group_subset, groups_to_compare, row_mins)
+  names(output) <- c('subset_data', 'group_subset', 'groups_to_compare', 'cp')
+
+  return (output)
+}
+
+#' Generate overdispersed initial values for MCMC chains
+#' Creates a list of initial values for JAGS model.
+#'
+#' @param sample_mean_1 Sample mean of the first group.
+#' @param sample_mean_2 Sample mean of the second group.
+#' @param sample_var_1 Sample variance of the first group.
+#' @param sample_var_2 Sample variance of the second group.
+#' @param n_chains The number of MCMC chains.
+#' @param spread_factor A multiplier to control the degree of overdispersion from the sample means.
+#' @return A list of length `n_chains`.
+#'
+#' @export
+
+
+# generate initial list -------
+generate_overdispersed_inits <- function(sample_mean_1, sample_mean_2, sample_var_1, sample_var_2,
+                                         n_chains, spread_factor = 3) {
+  inits_list <- vector("list", n_chains)
+
+  for (i in seq_len(n_chains)) {
+    # Alternate positive and negative spread
+    sign1 <- ifelse(i %% 2 == 0, 1, -1)
+    sign2 <- ifelse(i %% 2 == 0, -1, 1)
+
+    inits_list[[i]] <- list(
+      mu1p = sample_mean_1 + sign1 * stats::rnorm(1, sd = sqrt(sample_var_1) * spread_factor),
+      mu2p = sample_mean_2 + sign2 * stats::rnorm(1, sd = sqrt(sample_var_2) * spread_factor),
+      tau1p = 1 / (sample_var_1 * stats::runif(1, 0.5, 1.5)),  # wider range
+      tau2p = 1 / (sample_var_2 * stats::runif(1, 0.5, 1.5)),
+      .RNG.name = "base::Super-Duper", .RNG.seed = i
+    )
+  }
+
+  return(inits_list)
+}
+
+
+#' Calculate default values for group mean and variance
+#'
+#' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
+#' (with protein IDs as rownames), and columns correspond to samples. Each row must
+#' contain at least one non-NA value.
+#' @param group_vars_all A vector of within-group variances for all proteins and groups returned by `sigma_jp2params()`.
+#' @return A named numeric vector:
+#'   \item{default_mean}{The 5th percentile of all values.}
+#'   \item{default_var}{The median of all within-group variances.}
+#'
+#' @export
+
+default_val <- function(overall_distri, group_vars_all){
+  default_mean <- stats::quantile(unlist(overall_distri), probs = 0.05, na.rm = TRUE)
+  default_var <- stats::median(unlist(group_vars_all), na.rm = TRUE)
+  default <- c(default_mean, default_var)
+  names(default) <- c('default_mean', 'default_var')
+
+  return(default)
+}
+
+
