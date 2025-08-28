@@ -247,7 +247,9 @@ f_beta <- function(mu_val, beta, a, b) {
 # specify all comparisons, filter the dataset, only keep proteins with missing values -------
 setupContrasts <- function(overall_distri, comparisons, contrast, group, filter4NAs){
   # Split the comparison string into two group names
-  groups_to_compare <- names(comparisons[,contrast])[comparisons[,contrast] != 0]
+  groups_to_compare <- character(2)
+  groups_to_compare[1] <- names(comparisons[,contrast])[comparisons[,contrast] == 1]
+  groups_to_compare[2] <- names(comparisons[,contrast])[comparisons[,contrast] == -1]
 
   # Get indices for each group
   group1_indices <- which(group == groups_to_compare[1])
@@ -329,5 +331,6 @@ default_val <- function(overall_distri, group_vars_all){
 
   return(default)
 }
+
 
 
