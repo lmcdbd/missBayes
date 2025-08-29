@@ -269,7 +269,7 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
   })
   # Override defaults of hist function, if not specified by user:
   # (additional arguments "..." are passed to the hist function)
-  if ( is.null(xlab) ) xlab="Param. Val."
+  if ( is.null(xlab) ) xlab="LogFC"
   if ( is.null(cex.lab) ) cex.lab=1.5
   if ( is.null(cex) ) cex=1.4
   if ( is.null(xlim) ) xlim=range( c( compVal , ROPE , difference ) )
@@ -398,5 +398,6 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
   par(xpd=FALSE)
 
 }
+
 
 
