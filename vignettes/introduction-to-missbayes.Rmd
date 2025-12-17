@@ -1,0 +1,91 @@
+---
+title: "Bayesian Differential Expression Analysis for Proteomics"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bayesian Differential Expression Analysis for Proteomics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r}
+# Installation
+
+```
+
+
+# Main functions
+- `BayesMissingModel`: Main function for doing differential expression analysis on data frame/matrix objects by calculating different         statistics of posterior distribution.
+
+- `BayesianMissingAggregate`: Similar with `BayesMissingModel`, but for QFeatures objects.
+
+- `plotPost`: Visualize the log fold change posterior distribution and relative statistics of a specified protein.
+
+
+```{r setup}
+library(missBayes)
+library(limma)
+```
+
+# Example: Proteomic Analysis of FFPE Tissue Samples Identifies Potential Molecular Mechanisms Mediating Resistance to Radiotherapy in Rectal Cancer
+
+This study aims to investigate pathophysiological mechanisms underlying radioresistance.Out of a total of 50 tumor patients, paired tissue (control and tumor) samples were available from 39 patients. 
+
+Data is available from PRIDE with the id of PXD060201. The input data is MaxQuant output file proteinGroups, only a subset is used for example.
+
+
+```{r}
+
+# data pre-processing
+data_path <- system.file("extdata", "PXD060201_vignettes.csv", package = "missBayes")
+pg <- read.csv(data_path, blank.lines.skip = TRUE)
+# select tumor and control samples 
+pg <- pg[, c(1,558:646)]
+pg <- pg[, c(-12,-15, -18, -19, -30, -31, -46, -47, -84, -85, -88)]
+
+# set row names to protein ID and remove ID column
+pg <- pg[pg$Protein.IDs != "" & !is.na(pg$Protein.IDs), ]
+rownames(pg) <- pg$Protein.IDs
+pg <- pg[, -1]
+
+# log2 transformation, convert -Inf to NA and median normalization
+log2.df <- log2(pg)
+log2.df[is.infinite(as.matrix(log2.df))] <- NA
+log2norm.df <- normalizeMedianValues(log2.df)
+
+# filter out the rows that are entirely missing
+log2norm.filtered.df <- log2norm.df[rowSums(!is.na(log2norm.df)) > 0, ]
+
+# create group factor
+group_factor <- ifelse(grepl("_Tu", colnames(log2norm.df)), "Tu",
+                ifelse(grepl("_con", colnames(log2norm.df)), "con",
+                NA))
+group_factor <- as.factor(group_factor)
+
+# create contrast matrix
+comparison <- makeContrasts(Tu - con, levels = levels(group_factor))
+
+```
+
+```{r}
+# run Bayesian missing model
+output <- BayesMissingModel(log2norm.filtered.df, group_factor, comparison, parallel = FALSE)
+
+```
+
+```{r}
+# view the logFC distribution of protein "Q96D15"
+my_plot <- plotPost(log2norm.filtered.df, "Q96D15",group_factor, "Tu - con")
+
+
+```
+#References: 
+Proteomic Analysis of FFPE Tissue Samples Identifies Potential Molecular Mechanisms Mediating Resistance to Radiotherapy in Rectal Cancer
+Tobias Zott, Michael Wolf, Günter Plessl-Walder, Heinz Regele, Michael Bergmann, Samuel M. Meier-Menches, Christopher Gerner, Gerd R. Silberhumer, and Andrea Bileck
+Journal of Proteome Research 2025 24 (8), 3990-4001
