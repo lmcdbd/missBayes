@@ -14,9 +14,9 @@ BayesMissingModel(
   threshold = 0,
   parallel = TRUE,
   ROPE = c(-0.2, 0.2),
-  n.adapt = 500,
+  n.adapt = 1000,
   burn.in = 500,
-  n.iter = 5000,
+  n.iter = 10000,
   n.chains = 2,
   mcmcDiag = FALSE
 )
