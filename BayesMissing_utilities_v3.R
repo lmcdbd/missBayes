@@ -9,6 +9,7 @@ library(dplyr)
 library(limma)
 library(QFeatures)
 library(parallel)
+library(SingleCellExperiment)
 source("DBDA2E-utilities.R")  # this file is from Kruschke, J. K. (2015). Doing Bayesian Data Analysis, Second Edition, which provides some very useful functions
 
 
@@ -533,8 +534,8 @@ setGeneric("BayesianMissingAggregate", function(obj,...) standardGeneric("Bayesi
 
 setMethod(
   "BayesianMissingAggregate", "QFeatures",
-  function(obj, i, fcol, comparisons, gcol, contrastPrefix = 'BayesMissingOutput - ', threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2), 
-           n.adapt = 500,burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
+  function(obj, i, fcol, comparisons, gcol, contrastPrefix = 'BayesMissingOutput: ', threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2), 
+           n.adapt = 500, burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
     
     if (is.null(obj[[i]])) stop("QFeatures object does not contain assay ", i)
     
@@ -547,8 +548,10 @@ setMethod(
     log2all.df <- as.data.frame(assay(obj[[i]]))
     rownames(log2all.df) <- rowData(obj[[i]])[,fcol]
     
+    groups <- as.factor(colData(obj)[,gcol])
+    
     results <- BayesMissingModel(values = log2all.df, 
-                                 groups = colData(obj)[,gcol], 
+                                 groups = groups, 
                                  comparisons = comparisons, 
                                  filter4NAs = FALSE, #Filter4NAs must be false so that results align with rowData.
                                  threshold = threshold,
@@ -568,6 +571,42 @@ setMethod(
   }
 )
 
+setMethod(
+  "BayesianMissingAggregate", "SingleCellExperiment",
+  function(obj, fcol, comparisons, gcol, contrastPrefix = 'BayesMissingOutput: ', threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2), 
+           n.adapt = 500, burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
+    
+    if (!fcol %in% colnames(rowData(obj)))
+      stop("The rowData does not contain variable '", fcol, "'.")
+    
+    if (!gcol %in% colnames(colData(obj)))
+      stop("The colData does not contain variable '", gcol, "'.")
+    
+    log2all.df <- as.data.frame(assay(obj))
+    rownames(log2all.df) <- rowData(obj)[,fcol]
+    
+    groups <- as.factor(colData(obj)[,gcol])
+    
+    results <- BayesMissingModel(values = log2all.df, 
+                                 groups = groups, 
+                                 comparisons = comparisons, 
+                                 filter4NAs = FALSE, #Filter4NAs must be false so that results align with rowData.
+                                 threshold = threshold,
+                                 parallel = parallel, 
+                                 ROPE = ROPE,
+                                 n.adapt = n.adapt, 
+                                 burn.in = burn.in, 
+                                 n.iter = n.iter, 
+                                 n.chains = n.chains,
+                                 mcmcDiag = mcmcDiag)
+    
+    for (contrast in colnames(comparisons)){
+      rowData(obj)[[paste0(contrastPrefix, contrast)]] <- results[[contrast]]
+    }
+    
+    return(obj)
+  }
+)
 
 # 5. TEST ------
 # import data
@@ -606,6 +645,16 @@ qf <- BayesianMissingAggregate(qf, i = 'MaxLFQLog2',
                                comparisons = comparison, 
                                gcol = 'condition', 
                                parallel = TRUE, n.chains = 4, mcmcDiag = TRUE)
+
+#SCP demo
+leduc2022 <- scpdata::leduc2022_pSCoPE()
+leduc2022.proc <- getWithColData(leduc2022, 'proteins_norm2')
+L <- makeContrasts(contrasts = "Monocyte - Melanoma", levels = c("Monocyte", "Melanoma"))
+leduc2022.proc <- BayesianMissingAggregate(leduc2022.proc,
+                                           fcol = 'Leading.razor.protein.symbol',
+                                           comparisons = L,
+                                           gcol = 'SampleType',
+                                           parallel = TRUE, n.chains = 4, mcmcDiag = TRUE)
 
 # result
 TP_mcmc <- 0

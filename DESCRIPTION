@@ -3,13 +3,13 @@ Type: Package
 Title: Bayesian Differential Expression Analysis for Proteomics with Missing Data
 Version: 0.99.0
 Authors@R: 
-    c(person("Venk", "Mallikarjun", role = "aut"),
+    c(person("Venkatesh", "Mallikarjun", role = "aut"),
       person("Mengchun", "Li", email = "limengchun1122@gmail.com", role = c("cre", "aut")))
 biocViews: Proteomics, DifferentialExpression, Bayesian
 Description: Performs Bayesian differential expression analysis on proteomics data. 
     The core model explicitly accounts for missing values, by modeling the log fold change posterior distribution. 
 License: MIT + file LICENSE
-Imports: rjags, coda, parallel, matrixStats, limma, stats, methods, QFeatures
+Imports: rjags, coda, parallel, matrixStats, limma, stats, methods, QFeatures, MultiAssayExperiment, scpdata
 BugReports: https://github.com/lmcdbd/Bayesian-model
 Encoding: UTF-8
 RoxygenNote: 7.3.2
