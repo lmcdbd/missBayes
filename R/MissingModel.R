@@ -57,7 +57,7 @@
 
 
 BayesMissingModel <-  function(values, groups, comparisons, filter4NAs = FALSE, threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2),
-                               n.adapt = 500,burn.in = 500, n.iter = 5000, n.chains = 2, mcmcDiag = FALSE){
+                               n.adapt = 1000,burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
 
   zS <- zeroState(values)
   s1 <- sigma1(values)
@@ -145,7 +145,7 @@ setGeneric("BayesianMissingAggregate", function(obj,...) standardGeneric("Bayesi
 setMethod(
   "BayesianMissingAggregate", "QFeatures",
   function(obj, i, fcol, comparisons, gcol, contrastPrefix = 'BayesMissingOutput - ', threshold = 0, parallel = TRUE, ROPE = c(-0.2,0.2),
-           n.adapt = 500,burn.in = 500, n.iter = 5000, n.chains = 2, mcmcDiag = FALSE){
+           n.adapt = 1000,burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
 
     if (is.null(obj[[i]])) stop("QFeatures object does not contain assay ", i)
 
@@ -258,3 +258,4 @@ setMethod(
     return(obj)
   }
 )
+
