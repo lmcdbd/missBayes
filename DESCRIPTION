@@ -4,6 +4,7 @@ Title: Bayesian Differential Expression Analysis for Proteomics with Missing Dat
 Version: 0.99.1
 Authors@R: 
     c(person("Venkatesh", "Mallikarjun", role = "aut"),
+      person("Tom", "Smith", role = "aut"),
       person("Mengchun", "Li", email = "limengchun1122@gmail.com", role = c("cre", "aut")))
 biocViews: Proteomics, DifferentialExpression, Bayesian
 Description: Performs Bayesian differential expression analysis on proteomics data. 
