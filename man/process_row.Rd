@@ -39,7 +39,8 @@ practically equivalent to the null value (e.g., `c(-0.1, 0.1)` for log fold chan
 }
 \value{
 A single-row data frame containing summary statistics for the protein's
-  posterior log fold change distribution. Returns a row of `NA` values if the model fails to run for the protein.
+  posterior log fold change distribution. Returns a row of `NA` values if the model fails to run for the protein,
+  with the failure message attached as the `"fit_error"` attribute.
 }
 \description{
 The core computational function that fits the Bayesian model for a single protein.

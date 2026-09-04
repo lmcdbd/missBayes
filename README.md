@@ -11,8 +11,8 @@ https://www.biorxiv.org/content/10.64898/2026.01.15.699650v1
 install.packages("devtools")
 devtools::install_github("lmcdbd/missBayes")
 ```
-Two model specification files, model.txt and model_logit.txt, must be downloaded
-and placed in the working directory prior to running the model.
+The model specification files are installed with the package; nothing further
+needs to be downloaded.
 
 ## RUNNING THE MODEL
 
@@ -36,4 +36,4 @@ set.seed(456)  # Set seed for reproducibility
 output <- BayesMissingModel(log2all.df, group, comparison)
 
 # Plot posterior distribution for a given protein
-PlotPost(log2all.df, "protein ID", group, comparison)
+plotPost(log2all.df, "protein ID", group, "Treatment - Control")

@@ -4,14 +4,16 @@
 \alias{sigma_jp2params}
 \title{Estimate hyperparameters for the within-group variance prior}
 \usage{
-sigma_jp2params(overall_distri, r)
+sigma_jp2params(overall_distri, group)
 }
 \arguments{
 \item{overall_distri}{A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
 (with protein IDs as rownames), and columns correspond to samples. Each row must
 contain at least one non-NA value.}
 
-\item{r}{n integer specifying the number of replicates per group.}
+\item{group}{A factor vector specifying the group assignment for each sample.
+Groups may contain unequal numbers of samples, and the samples of a group
+need not be contiguous columns of `overall_distri`.}
 }
 \value{
 A list containing:

@@ -87,24 +87,26 @@ sigma1 <- function(overall_distri){
 #' (with protein IDs as rownames), and columns correspond to samples. Each row must
 #' contain at least one non-NA value.
 #' @param group A factor vector specifying the group assignment for each sample.
+#'   Groups may contain unequal numbers of samples, and the samples of a group
+#'   need not be contiguous columns of `overall_distri`.
 #' @return A list containing:
 #'   \item{alpha_p}{Shape of the inverse-gamma prior.}
 #'   \item{beta_p}{Rate of the inverse-gamma prior.}
-#'   \item{r}{Number of replicates per group.}
+#'   \item{group_sizes}{Named integer vector of the number of samples in each group.}
 #'   \item{group_means}{Matrix of mean value for each protein in each group.}
 #' @keywords internal
 
 
 sigma_p2params <- function(overall_distri, group){
 
-  r <- unname(table(group)[1])  # Number of replicates per group
+  group <- factor(group)
   n <- nlevels(group) # Number of groups
+  # Sample indices per group, taken from the factor rather than from column
+  # position: groups may be of unequal size and need not be contiguous.
+  group_indices <- split(seq_along(group), group)
 
   group_means <- t(apply(overall_distri, 1, function(row) {
-    sapply(1:n, function(i) {
-      group_indices <- (r * (i - 1) + 1):(r * i)
-      mean(row[group_indices], na.rm = TRUE)
-    })
+    vapply(group_indices, function(idx) mean(row[idx], na.rm = TRUE), numeric(1))
   }))
   between_group_vars_all <- apply(group_means, 1, var, na.rm = TRUE)
 
@@ -113,8 +115,8 @@ sigma_p2params <- function(overall_distri, group){
   alpha_p <- mean_var^2 / n*var_var + 2
   beta_p <- mean_var * (alpha_p - 1)
 
-  sigma_p2params <- list(alpha_p, beta_p, as.numeric(r), group_means) ########
-  names(sigma_p2params) <- c('alpha_p', 'beta_p', 'r', 'group_means')
+  sigma_p2params <- list(alpha_p, beta_p, lengths(group_indices), group_means)
+  names(sigma_p2params) <- c('alpha_p', 'beta_p', 'group_sizes', 'group_means')
 
   return (sigma_p2params)
 }
@@ -126,7 +128,9 @@ sigma_p2params <- function(overall_distri, group){
 #' @param overall_distri A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
 #' (with protein IDs as rownames), and columns correspond to samples. Each row must
 #' contain at least one non-NA value.
-#' @param r n integer specifying the number of replicates per group.
+#' @param group A factor vector specifying the group assignment for each sample.
+#'   Groups may contain unequal numbers of samples, and the samples of a group
+#'   need not be contiguous columns of `overall_distri`.
 #' @return A list containing:
 #'   \item{alpha}{A vector of shape parameters for each intensity bin.}
 #'   \item{beta}{A vector of rate parameters for each intensity bin.}
@@ -135,11 +139,21 @@ sigma_p2params <- function(overall_distri, group){
 #'   \item{group_vars_all}{A vector of all within-group variances.}
 #' @keywords internal
 
-sigma_jp2params <- function(overall_distri, r){
+sigma_jp2params <- function(overall_distri, group){
+  group <- factor(group)
+  # Sample indices per group, taken from the factor rather than from column
+  # position: groups may be of unequal size and need not be contiguous.
+  group_indices <- split(seq_along(group), group)
+  # Stands in for the old scalar `r` (replicates per group) in the shape
+  # parameter below. The mean group size equals `r` exactly when every group is
+  # the same size, so this is a no-op for a balanced design. Note that by R's
+  # precedence `alpha_x` evaluates as `mean_vars^2 * var_vars / r`, so `r`
+  # scales rather than divides the variance ratio; kept as published.
+  r <- mean(lengths(group_indices))
   group_means_all <- c()
   group_vars_all <- c()
-  for (i in 1:(ncol(overall_distri) %/% r)) {
-    group_i <- overall_distri[, (r * (i - 1) + 1):(r * i)]
+  for (i in seq_along(group_indices)) {
+    group_i <- overall_distri[, group_indices[[i]], drop = FALSE]
     group_i_mean <- rowMeans(group_i, na.rm = TRUE)
     group_i_var   <- matrixStats::rowVars(as.matrix(group_i), na.rm = TRUE)
     group_means_all <- c(group_means_all, group_i_mean)
@@ -193,7 +207,9 @@ sigma_jp2params <- function(overall_distri, r){
 f_alpha <- function(mu_val, alpha, a, b) {
   bin_breaks <- a:(b + 1)  # From a to b+1 so that each bin is [x, x+1]
   idx <- findInterval(mu_val, bin_breaks, rightmost.closed = TRUE)
-  if (!is.na(alpha[idx])) {
+  # findInterval() returns 0 below the first break, so guard the subscript:
+  # alpha[0] is numeric(0) and would make the test below error uninformatively.
+  if (idx >= 1L && idx <= length(alpha) && !is.na(alpha[idx])) {
     return(alpha[idx])
   } else {
     stop(paste("No alpha value available for mu =", mu_val))
@@ -216,7 +232,9 @@ f_alpha <- function(mu_val, alpha, a, b) {
 f_beta <- function(mu_val, beta, a, b) {
   bin_breaks <- a:(b + 1)  # From a to b+1 so that each bin is [x, x+1]
   idx <- findInterval(mu_val, bin_breaks, rightmost.closed = TRUE)
-  if (!is.na(beta[idx])) {
+  # findInterval() returns 0 below the first break, so guard the subscript:
+  # beta[0] is numeric(0) and would make the test below error uninformatively.
+  if (idx >= 1L && idx <= length(beta) && !is.na(beta[idx])) {
     return(beta[idx])
   } else {
     stop(paste("No beta value available for mu =", mu_val))

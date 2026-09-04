@@ -80,7 +80,8 @@ summarizePost = function( paramSampleVec ,
 #'   Region of Practical Equivalence (ROPE). Values within this interval are considered
 #'   practically equivalent to the null value (e.g., `c(-0.1, 0.1)` for log fold change).
 #' @return A single-row data frame containing summary statistics for the protein's
-#'   posterior log fold change distribution. Returns a row of `NA` values if the model fails to run for the protein.
+#'   posterior log fold change distribution. Returns a row of `NA` values if the model fails to run for the protein,
+#'   with the failure message attached as the `"fit_error"` attribute.
 #'
 #' @keywords internal
 
@@ -114,10 +115,18 @@ process_row <- function(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, thr
     )
   }
 
+  # Surfaced by runModel(); an unfitted protein must not be indistinguishable
+  # from a fitted one, whichever of the exits below is taken.
+  fit_error <- NA_character_
+  fail <- function(msg) {
+    attr(summary_row, "fit_error") <- sprintf("row %d: %s", i, msg)
+    summary_row
+  }
+
   y <- unlist(fixed_data$subset_data[i, ])
 
   # Skip if all NA
-  if (all(is.na(y))) return(summary_row)
+  if (all(is.na(y))) return(fail("no observed values in either group"))
 
   # Calculate missing proportion
   miss_prop <- mean(is.na(y))
@@ -138,14 +147,22 @@ process_row <- function(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, thr
   sample_var_2 <- stats::var(y2, na.rm = TRUE)
   sample_var_2 <- if (is.na(sample_var_2)) fixed_data$default_var else sample_var_2
 
-  # Calculate alpha/beta parameters
-  alpha1 <- tryCatch(f_alpha(sample_mean_1, fixed_data$alpha, fixed_data$a, fixed_data$b), error = function(e) NA)
-  beta1 <- tryCatch(f_beta(sample_mean_1, fixed_data$beta, fixed_data$a, fixed_data$b), error = function(e) NA)
-  alpha2 <- tryCatch(f_alpha(sample_mean_2, fixed_data$alpha, fixed_data$a, fixed_data$b), error = function(e) NA)
-  beta2 <- tryCatch(f_beta(sample_mean_2, fixed_data$beta, fixed_data$a, fixed_data$b), error = function(e) NA)
+  # Calculate alpha/beta parameters, keeping the first failure message so that
+  # a protein whose group means carry no variance prior can be reported.
+  prior_error <- NA_character_
+  lookup_prior <- function(f, mu_val, par) {
+    tryCatch(f(mu_val, par, fixed_data$a, fixed_data$b), error = function(e) {
+      if (is.na(prior_error)) prior_error <<- conditionMessage(e)
+      NA
+    })
+  }
+  alpha1 <- lookup_prior(f_alpha, sample_mean_1, fixed_data$alpha)
+  beta1 <- lookup_prior(f_beta, sample_mean_1, fixed_data$beta)
+  alpha2 <- lookup_prior(f_alpha, sample_mean_2, fixed_data$alpha)
+  beta2 <- lookup_prior(f_beta, sample_mean_2, fixed_data$beta)
 
   # Skip if parameters are invalid
-  if (any(is.na(c(alpha1, beta1, alpha2, beta2)))) return(summary_row)
+  if (any(is.na(c(alpha1, beta1, alpha2, beta2)))) return(fail(prior_error))
 
   # Generate initial values
   inits_list <- generate_overdispersed_inits(sample_mean_1, sample_mean_2,
@@ -159,7 +176,7 @@ process_row <- function(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, thr
       y = y_numeric,
       is_observed = is_observed,
       group_numeric = fixed_data$group_numeric,
-      r = fixed_data$r,
+      n = length(y_numeric),
       mu0 = fixed_data$mu_0,
       sigma_1 = fixed_data$sigma_1,
       alpha_p = fixed_data$alpha_p,
@@ -175,7 +192,7 @@ process_row <- function(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, thr
       y = y_numeric,
       is_observed = is_observed,
       group_numeric = fixed_data$group_numeric,
-      r = fixed_data$r,
+      n = length(y_numeric),
       cp = fixed_data$row_mins[i],
       mu0 = fixed_data$mu_0,
       sigma_1 = fixed_data$sigma_1,
@@ -258,8 +275,10 @@ process_row <- function(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, thr
     # Update summary row
 
   }, error = function(e) {
-    message(sprintf("Error in row %d: %s", i, e$message))
+    fit_error <<- sprintf("row %d: %s", i, conditionMessage(e))
   })
+
+  attr(summary_row, "fit_error") <- fit_error
 
   return(summary_row)
 }
@@ -309,7 +328,6 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
 
     alpha_p = sigma_p2p$alpha_p,
     beta_p = sigma_p2p$beta_p,
-    r = sigma_p2p$r,
 
     alpha = sigma_jp2p$alpha,
     beta = sigma_jp2p$beta,
@@ -376,6 +394,7 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
     
 
     # Combine results
+    mcmcresults_list_all <- collectFitErrors(mcmcresults_list_all)
     mcmcresults_df <- do.call(rbind, mcmcresults_list_all)
     rownames(mcmcresults_df) <- rownames(fixed_data$subset_data)
   } else{
@@ -386,11 +405,45 @@ runModel <- function(contrast_data, sigma_p2p, sigma_jp2p, zS, sigma_1, default_
         process_row(i, fixed_data, model_txt, model_logit_txt, mcmcDiag, threshold, ROPE)
       }
     )
+    mcmcresults_list_all <- collectFitErrors(mcmcresults_list_all)
     mcmcresults_df <- do.call(rbind, mcmcresults_list_all)
     rownames(mcmcresults_df) <- rownames(fixed_data$subset_data)
   }
 
   return(mcmcresults_df)
+}
+
+
+#' Warn about proteins whose model fit failed
+#'
+#' `process_row()` keeps a failure in one protein from aborting a whole run, but
+#' the failure must not be silent: a run in which every protein failed returns a
+#' well-formed, entirely `NA` table that would otherwise be indistinguishable
+#' from a successful one. Emits a single warning naming how many proteins failed
+#' and the first failure message.
+#'
+#' @param rows A list of single-row data frames returned by `process_row()`,
+#'   each optionally carrying a `"fit_error"` attribute.
+#' @return `rows`, with the `"fit_error"` markers stripped so that they do not
+#'   leak onto the combined results table.
+#' @keywords internal
+
+
+collectFitErrors <- function(rows){
+  errs <- vapply(rows, function(x) {
+    msg <- attr(x, "fit_error")
+    if (is.null(msg)) NA_character_ else as.character(msg)[1]
+  }, character(1))
+
+  failed <- which(!is.na(errs))
+  if (length(failed) > 0) {
+    warning(sprintf(
+      "%s of %d proteins failed to fit and were returned as NA. First error: %s",
+      if (length(failed) == length(errs)) sprintf("All %d", length(errs)) else format(length(failed)),
+      length(errs), errs[failed[1]]), call. = FALSE)
+  }
+
+  lapply(rows, function(x) { attr(x, "fit_error") <- NULL; x })
 }
 
 

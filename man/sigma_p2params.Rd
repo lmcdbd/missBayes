@@ -11,13 +11,15 @@ sigma_p2params(overall_distri, group)
 (with protein IDs as rownames), and columns correspond to samples. Each row must
 contain at least one non-NA value.}
 
-\item{group}{A factor vector specifying the group assignment for each sample.}
+\item{group}{A factor vector specifying the group assignment for each sample.
+Groups may contain unequal numbers of samples, and the samples of a group
+need not be contiguous columns of `overall_distri`.}
 }
 \value{
 A list containing:
   \item{alpha_p}{Shape of the inverse-gamma prior.}
   \item{beta_p}{Rate of the inverse-gamma prior.}
-  \item{r}{Number of replicates per group.}
+  \item{group_sizes}{Named integer vector of the number of samples in each group.}
   \item{group_means}{Matrix of mean value for each protein in each group.}
 }
 \description{

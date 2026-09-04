@@ -39,9 +39,12 @@ HDIofMCMC = function( sampleVec , credMass=0.95 ) {
 #'
 #' @param values A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
 #' (with protein IDs as rownames), and columns correspond to samples. Each row must
-#' contain at least one non-NA value.
+#' contain at least one non-NA value. Columns must be in the same order as `groups`,
+#' but need not be grouped together: samples of a group may be interleaved.
 #' @param id A character string specifying the protein ID to plot.
-#' @param groups A factor vector specifying the group assignment for each sample.
+#' @param groups A factor vector specifying the group assignment for each sample,
+#'   one entry per column of `values`. Groups may contain unequal numbers of
+#'   samples; unbalanced designs are fully supported.
 #' @param contrast A string specifying which two groups are compared.
 #' @param threshold Numeric. The parameter that determines
 #'   which missingness mechanism model to use. If `threshold = 1`,
@@ -108,11 +111,13 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
                       ... ) {
 
 
+  groups <- validateGroups(values, groups)
+
   # calculate parameters
   zS <- zeroState(values)
   s1 <- sigma1(values)
   s2P <- sigma_p2params(values, groups)
-  sjp2P <- sigma_jp2params(values, s2P$r)
+  sjp2P <- sigma_jp2params(values, groups)
   d <- default_val(values, sjp2P$group_vars_all)
 
   groups_to_compare <- strsplit(contrast, " - ")[[1]]
@@ -148,7 +153,6 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
 
     alpha_p = s2P$alpha_p,
     beta_p = s2P$beta_p,
-    r = s2P$r,
 
     alpha = sjp2P$alpha,
     beta = sjp2P$beta,
@@ -217,7 +221,7 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
       y = y_numeric,
       is_observed = is_observed,
       group_numeric = fixed_data$group_numeric,
-      r = fixed_data$r,
+      n = length(y_numeric),
       mu0 = fixed_data$mu_0,
       sigma_1 = fixed_data$sigma_1,
       alpha_p = fixed_data$alpha_p,
@@ -233,7 +237,7 @@ plotPost <- function( values, id , groups, contrast, threshold = 0, cenTend=c("m
       y = y_numeric,
       is_observed = is_observed,
       group_numeric = fixed_data$group_numeric,
-      r = fixed_data$r,
+      n = length(y_numeric),
       cp = fixed_data$row_mins[id],
       mu0 = fixed_data$mu_0,
       sigma_1 = fixed_data$sigma_1,

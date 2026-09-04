@@ -36,11 +36,14 @@ plotPost(
 \arguments{
 \item{values}{A numeric matrix or data.frame of log2 intensities. Rows correspond to proteins
 (with protein IDs as rownames), and columns correspond to samples. Each row must
-contain at least one non-NA value.}
+contain at least one non-NA value. Columns must be in the same order as `groups`,
+but need not be grouped together: samples of a group may be interleaved.}
 
 \item{id}{A character string specifying the protein ID to plot.}
 
-\item{groups}{A factor vector specifying the group assignment for each sample.}
+\item{groups}{A factor vector specifying the group assignment for each sample,
+one entry per column of `values`. Groups may contain unequal numbers of
+samples; unbalanced designs are fully supported.}
 
 \item{contrast}{A string specifying which two groups are compared.}
 

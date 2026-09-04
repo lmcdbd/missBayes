@@ -37,6 +37,8 @@ library(limma)
 
 This study aims to investigate pathophysiological mechanisms underlying radioresistance.Out of a total of 50 tumor patients, paired tissue (control and tumor) samples were available from 39 patients. 
 
+The 11 tumor samples without a matched control are removed below so that the comparison is made within patient pairs. This is a choice about the design of this analysis, not a requirement of the package: `BayesMissingModel()` accepts groups of unequal size, and passing all 89 samples would be a valid unpaired analysis.
+
 Data is available from PRIDE with the id of PXD060201. The input data is MaxQuant output file proteinGroups, only a subset is used for example.
 
 
