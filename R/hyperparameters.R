@@ -104,7 +104,7 @@ sigma_p2params <- function(overall_distri, group){
   # Sample indices per group, taken from the factor rather than from column
   # position: groups may be of unequal size and need not be contiguous.
   group_indices <- split(seq_along(group), group)
-
+  
   group_means <- t(apply(overall_distri, 1, function(row) {
     vapply(group_indices, function(idx) mean(row[idx], na.rm = TRUE), numeric(1))
   }))
@@ -112,7 +112,7 @@ sigma_p2params <- function(overall_distri, group){
 
   mean_var <- mean(between_group_vars_all, na.rm = TRUE)
   var_var <- stats::var(between_group_vars_all, na.rm = TRUE)
-  alpha_p <- mean_var^2 / n*var_var + 2
+  alpha_p <- mean_var^2 / (n*var_var) + 2
   beta_p <- mean_var * (alpha_p - 1)
 
   sigma_p2params <- list(alpha_p, beta_p, lengths(group_indices), group_means)
@@ -174,7 +174,7 @@ sigma_jp2params <- function(overall_distri, group){
       mean_vars <- mean(selected_vars)
       var_vars <- stats::var(selected_vars)
 
-      alpha_x <- (2 + (mean_vars^2 / r * var_vars))
+      alpha_x <- (2 + (mean_vars^2 / (r * var_vars)))
       beta_x <- mean_vars * (alpha_x - 1)
 
       alpha <- c(alpha, alpha_x)
