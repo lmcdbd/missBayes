@@ -20,6 +20,15 @@ zeroState <- function(overall_distri){
   mids <- overall_info$mids
   dens <- overall_info$density
   mu_0 <- mids[which.max(dens)]
+  
+  # If there are no missing values, the missingness model is not
+  # identifiable. Set gamma0 and gamma1 to dummy values because
+  # they will not be used when threshold = 0
+  if (missing_prop == 0) {
+    gamma0 <- Inf
+    gamma1 <- 0
+  } else {
+    
   # empty vector to store estimated missing density per bin
   missing_counts <- rep(0, length(overall_info$counts))
   for (i in seq_along(mids)) {
@@ -51,7 +60,8 @@ zeroState <- function(overall_distri){
   # extract coefficients
   gamma0 <- stats::coef(logit_obs)[1]
   gamma1 <- stats::coef(logit_obs)[2]
-
+    
+  }
   zS <- c(mu_0, gamma0, gamma1)
   names(zS) <- c('mu_0', 'gamma0', 'gamma1')
 

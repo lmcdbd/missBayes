@@ -132,6 +132,16 @@ BayesMissingModel <-  function(values, groups, comparisons, filter4NAs = FALSE, 
                                n.adapt = 1000,burn.in = 500, n.iter = 10000, n.chains = 2, mcmcDiag = FALSE){
 
   groups <- validateGroups(values, groups, comparisons)
+  
+  missing_prop <- sum(is.na(values)) / length(values)
+
+    if (missing_prop == 0 && threshold != 0) {
+        stop(
+            "No missing values were detected. ",
+            "Please set threshold = 0."
+        )
+    }
+  
 
   zS <- zeroState(values)
   s1 <- sigma1(values)
